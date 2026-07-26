@@ -48,7 +48,7 @@ _link_locks: dict[str, asyncio.Lock] = {}
 _locks_guard = asyncio.Lock()
 
 # ── Free-tier / premium config ───────────────────────────────────
-FREE_LIMIT = 5  # number of full downloads a non-premium user gets before stream-only mode
+FREE_LIMIT = 10  # number of full downloads a non-premium user gets before stream-only mode
 
 
 async def update_qr_timer(client, msg, order_id, orders, sessions, user_id, total_seconds=300):
@@ -319,7 +319,7 @@ _DEFAULT_SETTINGS = {
     "button_text": "CHECKOUT ♡",
     "button_url": "",
     "auto_delete_seconds": 0,
-    "caption_template": "<blockquote>“<b>Below is Your Link</b> ↩️\n\n{link}”</blockquote>",
+    "caption_template": "<blockquote>“<b>Below is Your Link</b> ↩️\n\n<b>{link}</b>”</blockquote>",
 }
 
 
@@ -671,19 +671,20 @@ async def start(app: Client, m: Message):
         total = len(links)
         tasks = []
 
-        for i, link in enumerate(links):
-            if premium or used < FREE_LIMIT:
+        if premium or used < FREE_LIMIT:
+            for i, link in enumerate(links):
                 tasks.append(process_link(app, m, link, i + 1, total))
-                if not premium:
-                    used += 1
-            else:
+            await asyncio.gather(*tasks, return_exceptions=True)
+            if not premium:
+                await increment_free_used(m.from_user.id)
+        else:
+            for i, link in enumerate(links):
                 tag = f"[{i + 1}/{total}]"
                 msg = await m.reply(
                     f"<blockquote><b>⚡ 𝖥𝖤𝖳𝖢𝖧𝖨𝖭𝖦 𝖫𝖨𝖭𝖪 {tag}...</b></blockquote>"
                 )
                 tasks.append(deliver_stream_only(m, msg, link, tag))
-
-        await asyncio.gather(*tasks, return_exceptions=True)
+            await asyncio.gather(*tasks, return_exceptions=True)
         return
 
     try:
@@ -1151,10 +1152,6 @@ async def process_link(app: Client, m: Message, link: str, idx: int, total: int)
             panel = await get_panel_settings()
             await schedule_auto_delete(app, sent.chat.id, sent.id, panel["auto_delete_seconds"])
 
-            # Only count against free quota AFTER a successful full delivery
-            if not await is_premium(m.from_user.id):
-                await increment_free_used(m.from_user.id)
-
             try:
                 await msg.delete()
             except Exception:
@@ -1275,12 +1272,12 @@ async def admin_repost(app: Client, m: Message):
     if m.photo:
         reposted = await app.send_photo(
             REPOST_CHANNEL, m.photo.file_id, caption=new_caption,
-            reply_markup=button_markup, protect_content=True,
+            reply_markup=button_markup, protect_content=True, parse_mode=ParseMode.HTML,
         )
     elif m.video:
         reposted = await app.send_video(
             REPOST_CHANNEL, m.video.file_id, caption=new_caption,
-            reply_markup=button_markup, protect_content=True,
+            reply_markup=button_markup, protect_content=True, parse_mode=ParseMode.HTML,
         )
 
     await status.edit_text(f"<b>✅ Stored {total} video(s) and reposted with combined link.</b>")
@@ -1308,19 +1305,21 @@ async def diskwala(app: Client, m: Message):
 
     tasks = []
 
-    for i, link in enumerate(links):
-        if premium or used < FREE_LIMIT:
+    if premium or used < FREE_LIMIT:
+        # Whole batch (1 or many links) counts as a single free use.
+        for i, link in enumerate(links):
             tasks.append(process_link(app, m, link, i + 1, total))
-            if not premium:
-                used += 1
-        else:
+        await asyncio.gather(*tasks, return_exceptions=True)
+        if not premium:
+            await increment_free_used(uid)
+    else:
+        for i, link in enumerate(links):
             tag = f"[{i + 1}/{total}]"
             msg = await m.reply(
                 f"<blockquote><b>⚡ 𝖥𝖤𝖳𝖢𝖧𝖨𝖭𝖦 𝖫𝖨𝖭𝖪 {tag}...</b></blockquote>"
             )
             tasks.append(deliver_stream_only(m, msg, link, tag))
-
-    await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 from pyrogram import filters
 from pyrogram.errors import FloodWait, UserIsBlocked, InputUserDeactivated, PeerIdInvalid
