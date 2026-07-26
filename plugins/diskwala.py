@@ -1272,12 +1272,12 @@ async def admin_repost(app: Client, m: Message):
     if m.photo:
         reposted = await app.send_photo(
             REPOST_CHANNEL, m.photo.file_id, caption=new_caption,
-            reply_markup=button_markup, protect_content=True, parse_mode=ParseMode.HTML,
+            reply_markup=button_markup, parse_mode=ParseMode.HTML,
         )
     elif m.video:
         reposted = await app.send_video(
             REPOST_CHANNEL, m.video.file_id, caption=new_caption,
-            reply_markup=button_markup, protect_content=True, parse_mode=ParseMode.HTML,
+            reply_markup=button_markup, parse_mode=ParseMode.HTML,
         )
 
     await status.edit_text(f"<b>✅ Stored {total} video(s) and reposted with combined link.</b>")
