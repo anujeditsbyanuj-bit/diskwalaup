@@ -248,8 +248,13 @@ async def is_subscribed(app: Client, user_id: int) -> bool:
         return member.status not in ("left", "kicked", "banned")
     except UserNotParticipant:
         return False
-    except Exception:
-        return True
+    except Exception as e:
+        # Fail-closed: any other error (bot not admin in FORCE_SUB_CHANNEL,
+        # wrong channel username, channel not found, etc.) now blocks access
+        # instead of silently letting everyone through. Check the logs for
+        # the exact reason if this starts firing.
+        LOGGER(__name__).error(f"is_subscribed check failed for {user_id}: {e}")
+        return False
 
 
 def join_prompt_markup() -> InlineKeyboardMarkup:
@@ -580,6 +585,41 @@ async def run_aria2c(url: str, out_path: str, status_msg: Message, tag: str):
 @Client.on_message(filters.command("start") & filters.private)
 async def start(app: Client, m: Message):
     await db.update_one({"_id": m.from_user.id}, {"$set": {"name": m.from_user.first_name}}, upsert=True)
+
+    # Deep-link support: https://t.me/<bot>?start=<diskwala_link>
+    # Telegram passes whatever follows "/start " as the payload text.
+    payload = m.text.split(None, 1)[1] if len(m.command) > 1 else ""
+    links = RE.findall(payload)
+
+    if links:
+        if not await is_subscribed(app, m.from_user.id):
+            await m.reply(
+                f"<b>🔒 𝖩𝗈𝗂𝗇 𝗈𝗎𝗋 𝖼𝗁𝖺𝗇𝗇𝖾𝗅 𝗍𝗈 𝗎𝗌𝖾 𝗍𝗁𝗂𝗌 𝖻𝗈𝗍</b>\n\n"
+                f"Join @{FORCE_SUB_CHANNEL}, then send your link again.",
+                reply_markup=join_prompt_markup(),
+            )
+            return
+
+        premium = await is_premium(m.from_user.id)
+        used = await get_free_used(m.from_user.id)
+        total = len(links)
+        tasks = []
+
+        for i, link in enumerate(links):
+            if premium or used < FREE_LIMIT:
+                tasks.append(process_link(app, m, link, i + 1, total))
+                if not premium:
+                    used += 1
+            else:
+                tag = f"[{i + 1}/{total}]"
+                msg = await m.reply(
+                    f"<blockquote><b>⚡ 𝖥𝖤𝖳𝖢𝖧𝖨𝖭𝖦 𝖫𝖨𝖭𝖪 {tag}...</b></blockquote>"
+                )
+                tasks.append(deliver_stream_only(m, msg, link, tag))
+
+        await asyncio.gather(*tasks, return_exceptions=True)
+        return
+
     try:
         await m.reply("<b>👋 Send me a Diskwala or Flezen link.</b>")
     except UserIsBlocked:
