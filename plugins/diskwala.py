@@ -807,14 +807,9 @@ async def deliver_stream_only(m: Message, msg: Message, link: str, tag: str):
 💾 <code>{f['size']/1048576:.2f} MB</code>
 </blockquote>
 
-𝖸𝗈𝗎 𝖼𝖺𝗇 𝗌𝗍𝗂𝗅𝗅 𝗌𝗍𝗋𝖾𝖺𝗆 𝗂𝗍 𝖻𝖾𝗅𝗈𝗐.
 𝖴𝗉𝗀𝗋𝖺𝖽𝖾 𝗍𝗈 𝖯𝗋𝖾𝗆𝗂𝗎𝗆 𝖿𝗈𝗋 𝖿𝗎𝗅𝗅 𝖽𝗈𝗐𝗇𝗅𝗈𝖺𝖽𝗌.
 """,
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton(
-                        "▶️ 𝖮𝖭𝖫𝖨𝖭𝖤 𝖯𝖫𝖠𝖸𝖤𝖱",
-                        web_app=WebAppInfo(url=download_url)
-                    )],
                     [InlineKeyboardButton(
                         "💎 𝖦𝖾𝗍 𝖯𝗋𝖾𝗆𝗂𝗎𝗆",
                         callback_data="buy_premium"
@@ -833,10 +828,6 @@ async def deliver_stream_only(m: Message, msg: Message, link: str, tag: str):
 💾 <code>{f['size']/1048576:.2f} MB</code>
 </blockquote>""",
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton(
-                        "▶️ 𝖮𝖭𝖫𝖨𝖭𝖤 𝖯𝖫𝖠𝖸𝖤𝖱",
-                        web_app=WebAppInfo(url=download_url)
-                    )],
                     [InlineKeyboardButton(
                         "💎 𝖦𝖾𝗍 𝖯𝗋𝖾𝗆𝗂𝗎𝗆",
                         callback_data="buy_premium"
@@ -975,9 +966,7 @@ async def diskwala(app: Client, m: Message):
     tasks = []
 
     for i, link in enumerate(links):
-        # Full download happens if: premium, still under the free limit,
-        # OR stream-only mode is currently switched off (STREAM_ONLY_ENABLED).
-        if premium or used < FREE_LIMIT or not STREAM_ONLY_ENABLED:
+        if premium or used < FREE_LIMIT:
             tasks.append(process_link(app, m, link, i + 1, total))
             if not premium:
                 used += 1
