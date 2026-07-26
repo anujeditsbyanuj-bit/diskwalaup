@@ -45,6 +45,12 @@ LOG_CHANNELS = {
     "default": int(os.environ["LOG_CHANNEL_ID"]) if os.getenv("LOG_CHANNEL_ID") else None,
 }
 
+# ── Admin repost feature ───────────────────────────────────────────
+# VIDEO_STORAGE_CHANNEL: where downloaded videos get uploaded/backed up
+# REPOST_CHANNEL: where the edited post (with the combined deep-link) goes
+VIDEO_STORAGE_CHANNEL = int(os.environ["VIDEO_STORAGE_CHANNEL"]) if os.getenv("VIDEO_STORAGE_CHANNEL") else None
+REPOST_CHANNEL = int(os.environ["REPOST_CHANNEL"]) if os.getenv("REPOST_CHANNEL") else None
+
 PAYMENT_VERIFY_API = os.getenv("PAYMENT_VERIFY_API", "")
 
 # ── Logging ───────────────────────────────────────────────────────
