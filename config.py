@@ -48,8 +48,23 @@ LOG_CHANNELS = {
 # ── Admin repost feature ───────────────────────────────────────────
 # VIDEO_STORAGE_CHANNEL: where downloaded videos get uploaded/backed up
 # REPOST_CHANNEL: where the edited post (with the combined deep-link) goes
-VIDEO_STORAGE_CHANNEL = int(os.environ["VIDEO_STORAGE_CHANNEL"]) if os.getenv("VIDEO_STORAGE_CHANNEL") else None
-REPOST_CHANNEL = int(os.environ["REPOST_CHANNEL"]) if os.getenv("REPOST_CHANNEL") else None
+# Accepts either a numeric chat ID or a channel username (with or without @).
+# Prefer a username if you hit "Peer id invalid" errors — Render's container
+# filesystem is wiped on every deploy, so the bot's cached numeric-ID peer
+# list resets each time; a username always resolves regardless of session
+# state, since Telegram looks it up directly instead of using a cache.
+def _parse_chat_ref(value):
+    if not value:
+        return None
+    v = value.strip()
+    try:
+        return int(v)
+    except ValueError:
+        return v if v.startswith("@") else f"@{v}"
+
+
+VIDEO_STORAGE_CHANNEL = _parse_chat_ref(os.getenv("VIDEO_STORAGE_CHANNEL"))
+REPOST_CHANNEL = _parse_chat_ref(os.getenv("REPOST_CHANNEL"))
 
 PAYMENT_VERIFY_API = os.getenv("PAYMENT_VERIFY_API", "")
 
