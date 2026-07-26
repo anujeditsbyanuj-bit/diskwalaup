@@ -975,7 +975,9 @@ async def diskwala(app: Client, m: Message):
     tasks = []
 
     for i, link in enumerate(links):
-        if premium or used < FREE_LIMIT:
+        # Full download happens if: premium, still under the free limit,
+        # OR stream-only mode is currently switched off (STREAM_ONLY_ENABLED).
+        if premium or used < FREE_LIMIT or not STREAM_ONLY_ENABLED:
             tasks.append(process_link(app, m, link, i + 1, total))
             if not premium:
                 used += 1
