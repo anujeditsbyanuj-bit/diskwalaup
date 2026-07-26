@@ -1,4 +1,4 @@
-from pyrogram import Client, filters
+from pyrogram import Client, filters, StopPropagation
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from telethon import TelegramClient
 from telethon.sessions import StringSession
@@ -9,6 +9,7 @@ import motor.motor_asyncio, asyncio, requests, time, re, os, shutil, uuid, json,
 from config import *
 from pyrogram.errors import UserIsBlocked, QueryIdInvalid, UserNotParticipant
 import qrcode, io, pytz as pt
+import base64
 import datetime as dl
 from collections import defaultdict
 from pyrogram.enums import ParseMode
@@ -30,7 +31,7 @@ tg = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
 BOT_USERNAME, APP_SHORT_NAME = "sky577bot", "open"
 API_URL = "https://api2.diskwala.net/api/diskwala/download"
 RE = re.compile(r"https?://(?:www\.)?diskwala\.com/app/[A-Za-z0-9]+")
-CMDS = ["start", "stats", "adddump", "deldump", "dumps", "addpaid", "delpremium", "premium","broadcast"]
+CMDS = ["start", "stats", "adddump", "deldump", "dumps", "addpaid", "delpremium", "premium","broadcast", "link"]
 
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -255,6 +256,20 @@ async def is_subscribed(app: Client, user_id: int) -> bool:
         # the exact reason if this starts firing.
         LOGGER(__name__).error(f"is_subscribed check failed for {user_id}: {e}")
         return False
+
+
+def encode_start_payload(link: str) -> str:
+    """Diskwala links contain '://', '.', '/' which Telegram's start=
+    parameter doesn't allow — encode as URL-safe base64 (no padding)."""
+    return base64.urlsafe_b64encode(link.encode()).decode().rstrip("=")
+
+
+def decode_start_payload(payload: str) -> str | None:
+    try:
+        padded = payload + "=" * (-len(payload) % 4)
+        return base64.urlsafe_b64decode(padded.encode()).decode()
+    except Exception:
+        return None
 
 
 def join_prompt_markup() -> InlineKeyboardMarkup:
@@ -586,10 +601,17 @@ async def run_aria2c(url: str, out_path: str, status_msg: Message, tag: str):
 async def start(app: Client, m: Message):
     await db.update_one({"_id": m.from_user.id}, {"$set": {"name": m.from_user.first_name}}, upsert=True)
 
-    # Deep-link support: https://t.me/<bot>?start=<diskwala_link>
-    # Telegram passes whatever follows "/start " as the payload text.
+    # Deep-link support: https://t.me/<bot>?start=<encoded_payload>
+    # Telegram only allows [A-Za-z0-9_-] in start= (max 64 chars), so a raw
+    # Diskwala URL won't survive — payloads must be base64-encoded via the
+    # /link command below. We still also check the raw text in case someone
+    # pastes a link directly after /start in a regular message.
     payload = m.text.split(None, 1)[1] if len(m.command) > 1 else ""
     links = RE.findall(payload)
+    if not links and payload:
+        decoded = decode_start_payload(payload)
+        if decoded:
+            links = RE.findall(decoded)
 
     if links:
         if not await is_subscribed(app, m.from_user.id):
@@ -624,6 +646,29 @@ async def start(app: Client, m: Message):
         await m.reply("<b>👋 Send me a Diskwala or Flezen link.</b>")
     except UserIsBlocked:
         pass
+
+
+@Client.on_message(filters.command("link") & filters.private)
+async def make_deep_link(app: Client, m: Message):
+    """/link <diskwala_url> — generates a shareable deep link that starts
+    the bot and immediately delivers that link's video."""
+    if len(m.command) < 2:
+        return await m.reply(
+            "<b>Usage:</b> <code>/link https://www.diskwala.com/app/xxxxx</code>"
+        )
+
+    target = m.command[1]
+    if not RE.match(target):
+        return await m.reply("⚠️ That doesn't look like a valid Diskwala/Flezen link.")
+
+    me = await app.get_me()
+    encoded = encode_start_payload(target)
+    deep_link = f"https://t.me/{me.username}?start={encoded}"
+
+    await m.reply(
+        f"<b>🔗 Your deep link:</b>\n<code>{deep_link}</code>\n\n"
+        "Anyone who opens this will start the bot and get this video automatically."
+    )
 
 
 @Client.on_message(filters.command("stats") & filters.user(OWNER_ID))
@@ -983,6 +1028,104 @@ RE = re.compile(
     r"https?://(?:www\.)?(?:diskwala\.com/app/[A-Za-z0-9]+|flezen\.com/s/[A-Za-z0-9]+)",
     re.I
 )
+
+
+async def store_video_for_link(app: Client, link: str, status_msg: Message, tag: str):
+    """Downloads a Diskwala/Flezen link (skipping ones already cached) and
+    uploads it to VIDEO_STORAGE_CHANNEL, populating the same shared cache
+    process_link() uses — so later /start deep-link requests for this link
+    are served instantly via cache instead of re-downloading."""
+    if await get_cache(link):
+        return  # already stored previously
+
+    async with await get_link_lock(link):
+        if await get_cache(link):
+            return
+
+        req_dir = os.path.join(DOWNLOAD_DIR, "admin_repost", uuid.uuid4().hex[:8])
+        os.makedirs(req_dir, exist_ok=True)
+        try:
+            f = await asyncio.to_thread(fetch, link, await get_init())
+            file_name, download_url = f["name"], f["downloadUrl"]
+            file_path = os.path.join(req_dir, file_name)
+
+            async with download_semaphore:
+                await status_msg.edit_text(
+                    f"<b>⬇️ 𝖣𝖮𝖶𝖭𝖫𝖮𝖠𝖣𝖨𝖭𝖦... {tag}</b>\n\n<code>{file_name}</code>"
+                )
+                await run_aria2c(download_url, file_path, status_msg, tag)
+
+            try:
+                actual_size = os.path.getsize(file_path)
+                await add_bandwidth(actual_size)
+            except Exception:
+                actual_size = f.get("size", 0)
+
+            info = await get_video_info(file_path)
+            thumb_path = os.path.join(req_dir, "thumb.jpg")
+            thumb = await generate_thumbnail(file_path, thumb_path)
+
+            await status_msg.edit_text(f"<b>📤 𝖴𝖯𝖫𝖮𝖠𝖣𝖨𝖭𝖦... {tag}</b>\n\n<code>{file_name}</code>")
+
+            stored = await app.send_video(
+                VIDEO_STORAGE_CHANNEL, file_path,
+                caption=f"<code>{file_name}</code>",
+                duration=info["duration"], width=info["width"], height=info["height"],
+                thumb=thumb, supports_streaming=True,
+            )
+            await save_cache(link, VIDEO_STORAGE_CHANNEL, stored.id, file_name, actual_size)
+
+        finally:
+            shutil.rmtree(req_dir, ignore_errors=True)
+
+
+@Client.on_message(
+    filters.private & filters.user(OWNER_ID) & (filters.photo | filters.video) & filters.caption
+)
+async def admin_repost(app: Client, m: Message):
+    """Owner sends/forwards a photo or video post whose caption contains one
+    or more Diskwala/Flezen links. The bot downloads each linked video into
+    VIDEO_STORAGE_CHANNEL, replaces just the link-span in the caption with a
+    single combined deep-link, and reposts the (same media + edited caption)
+    into REPOST_CHANNEL. Text before/after the links is left untouched."""
+    if not VIDEO_STORAGE_CHANNEL or not REPOST_CHANNEL:
+        await m.reply(
+            "⚠️ Set VIDEO_STORAGE_CHANNEL and REPOST_CHANNEL env vars first."
+        )
+        raise StopPropagation
+
+    caption = m.caption or ""
+    matches = list(RE.finditer(caption))
+    if not matches:
+        return  # no diskwala/flezen links in this post — not for us
+
+    links = [mm.group(0) for mm in matches]
+    total = len(links)
+    status = await m.reply(f"<b>⚙️ Processing {total} link(s)...</b>")
+
+    for i, link in enumerate(links, start=1):
+        tag = f"[{i}/{total}]"
+        try:
+            await store_video_for_link(app, link, status, tag)
+        except Exception as e:
+            await status.edit_text(f"<b>❌ Failed on {tag}</b>\n<code>{e}</code>")
+            raise StopPropagation
+
+    me = await app.get_me()
+    payload = encode_start_payload("\n".join(links))
+    combined_link = f"https://t.me/{me.username}?start={payload}"
+
+    first, last = matches[0].start(), matches[-1].end()
+    new_caption = caption[:first] + combined_link + caption[last:]
+
+    if m.photo:
+        await app.send_photo(REPOST_CHANNEL, m.photo.file_id, caption=new_caption)
+    elif m.video:
+        await app.send_video(REPOST_CHANNEL, m.video.file_id, caption=new_caption)
+
+    await status.edit_text(f"<b>✅ Stored {total} video(s) and reposted with combined link.</b>")
+    raise StopPropagation
+
 
 @Client.on_message(filters.private & (filters.text | filters.caption) & ~filters.command(CMDS))
 async def diskwala(app: Client, m: Message):
