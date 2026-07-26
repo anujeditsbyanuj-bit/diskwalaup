@@ -48,7 +48,7 @@ _link_locks: dict[str, asyncio.Lock] = {}
 _locks_guard = asyncio.Lock()
 
 # ── Free-tier / premium config ───────────────────────────────────
-FREE_LIMIT = 10  # number of full downloads a non-premium user gets before stream-only mode
+FREE_LIMIT = 5  # number of full downloads a non-premium user gets before stream-only mode
 
 
 async def update_qr_timer(client, msg, order_id, orders, sessions, user_id, total_seconds=300):
