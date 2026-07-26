@@ -1,0 +1,16 @@
+services:
+  diskwala:
+    container_name: diskwala
+    build:
+      context: .
+      dockerfile: DockerFile
+    # Uncomment only if you're running this as a Render "Web Service"
+    # or otherwise need a bound port. A Telegram bot normally doesn't.
+    # ports:
+    #   - "8912:6000"
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./downloads:/app/downloads
+    command: "python3 bot.py"
