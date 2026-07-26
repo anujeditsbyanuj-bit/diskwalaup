@@ -31,7 +31,7 @@ tg = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
 BOT_USERNAME, APP_SHORT_NAME = "sky577bot", "open"
 API_URL = "https://api2.diskwala.net/api/diskwala/download"
 RE = re.compile(r"https?://(?:www\.)?diskwala\.com/app/[A-Za-z0-9]+")
-CMDS = ["start", "stats", "adddump", "deldump", "dumps", "addpaid", "delpremium", "premium","broadcast", "link"]
+CMDS = ["start", "stats", "adddump", "deldump", "dumps", "addpaid", "delpremium", "premium","broadcast", "link", "panel"]
 
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -309,6 +309,38 @@ async def get_dumps() -> list[int]:
     return [d["_id"] async for d in dumps_col.find({})]
 
 
+# ── Admin panel settings (checkout button + auto-delete timer) ────
+_DEFAULT_SETTINGS = {"button_text": "CHECKOUT ♡", "button_url": "", "auto_delete_seconds": 0}
+
+
+async def get_panel_settings() -> dict:
+    doc = await meta_col.find_one({"_id": "panel_settings"})
+    settings = dict(_DEFAULT_SETTINGS)
+    if doc:
+        settings.update({k: v for k, v in doc.items() if k != "_id"})
+    return settings
+
+
+async def set_panel_setting(key: str, value):
+    await meta_col.update_one({"_id": "panel_settings"}, {"$set": {key: value}}, upsert=True)
+
+
+# Tracks which admin setting an owner is currently mid-way through typing,
+# e.g. pending_admin_input[owner_id] = "button_text"
+pending_admin_input: dict[int, str] = {}
+
+
+async def schedule_auto_delete(app: Client, chat_id: int, message_id: int, seconds: int):
+    if seconds and seconds > 0:
+        async def _delete_later():
+            await asyncio.sleep(seconds)
+            try:
+                await app.delete_messages(chat_id, message_id)
+            except Exception:
+                pass
+        asyncio.create_task(_delete_later())
+
+
 async def add_dump(cid: int):
     await dumps_col.update_one({"_id": cid}, {"$set": {"_id": cid}}, upsert=True)
 
@@ -351,7 +383,9 @@ async def try_deliver_from_cache(app: Client, m: Message, msg: Message, link: st
         return False
     try:
         await msg.edit_text(f"<b>⚡ 𝖢𝖠𝖢𝖧𝖤𝖣 — 𝖨𝖭𝖲𝖳𝖠𝖭𝖳 𝖣𝖤𝖫𝖨𝖵𝖤𝖱𝖸 {tag}</b>\n\n<code>{cached['file_name']}</code>")
-        await app.copy_message(m.chat.id, cached["chat_id"], cached["message_id"])
+        sent = await app.copy_message(m.chat.id, cached["chat_id"], cached["message_id"])
+        panel = await get_panel_settings()
+        await schedule_auto_delete(app, sent.chat.id, sent.id, panel["auto_delete_seconds"])
         await msg.delete()
         return True
     except Exception:
@@ -861,6 +895,78 @@ async def list_dumps(_, m):
                   if dumps else "No dump channels configured.")
 
 
+def _panel_markup(s: dict) -> InlineKeyboardMarkup:
+    delete_label = "Off" if not s["auto_delete_seconds"] else f"{s['auto_delete_seconds']}s"
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"✏️ Button Text: {s['button_text']}", callback_data="panel_set_button_text")],
+        [InlineKeyboardButton(f"🔗 Button URL: {s['button_url'] or 'not set'}", callback_data="panel_set_button_url")],
+        [InlineKeyboardButton(f"⏱ Auto-Delete: {delete_label}", callback_data="panel_set_auto_delete")],
+        [InlineKeyboardButton("🔄 Refresh", callback_data="panel_refresh")],
+    ])
+
+
+@Client.on_message(filters.command("panel") & filters.user(OWNER_ID))
+async def admin_panel(_, m: Message):
+    s = await get_panel_settings()
+    await m.reply(
+        "<b>⚙️ Admin Panel</b>\n\n"
+        "Tap a setting below to change it. These apply to every repost "
+        "(checkout button) and every video delivery (auto-delete).",
+        reply_markup=_panel_markup(s),
+    )
+
+
+@Client.on_callback_query(filters.regex("^panel_refresh$") & filters.user(OWNER_ID))
+async def panel_refresh_cb(_, cq: CallbackQuery):
+    s = await get_panel_settings()
+    await cq.message.edit_reply_markup(_panel_markup(s))
+    await cq.answer("Refreshed")
+
+
+@Client.on_callback_query(filters.regex("^panel_set_(button_text|button_url|auto_delete)$") & filters.user(OWNER_ID))
+async def panel_set_cb(_, cq: CallbackQuery):
+    key = cq.data.replace("panel_set_", "")
+    pending_admin_input[cq.from_user.id] = key
+    prompts = {
+        "button_text": "Send the new <b>button text</b> (e.g. <code>CHECKOUT ♡</code>):",
+        "button_url": "Send the new <b>button URL</b> (must start with http:// or https://):",
+        "auto_delete": "Send the <b>auto-delete time in seconds</b> (send <code>0</code> to turn it off):",
+    }
+    await cq.answer()
+    await cq.message.reply(prompts[key])
+
+
+@Client.on_message(filters.private & filters.user(OWNER_ID) & filters.text & ~filters.command(CMDS))
+async def admin_panel_input(_, m: Message):
+    uid = m.from_user.id
+    if uid not in pending_admin_input:
+        return  # not answering a panel prompt — let normal handlers process this
+
+    key = pending_admin_input.pop(uid)
+    value = m.text.strip()
+
+    if key == "button_text":
+        await set_panel_setting("button_text", value)
+        await m.reply(f"✅ Button text set to: <code>{value}</code>")
+
+    elif key == "button_url":
+        if not value.startswith("http://") and not value.startswith("https://"):
+            pending_admin_input[uid] = key  # keep waiting, didn't consume this attempt
+            return await m.reply("⚠️ URL must start with http:// or https://. Try again:")
+        await set_panel_setting("button_url", value)
+        await m.reply(f"✅ Button URL set to: <code>{value}</code>")
+
+    elif key == "auto_delete":
+        if not value.isdigit():
+            pending_admin_input[uid] = key
+            return await m.reply("⚠️ Send a plain number of seconds (0 = off). Try again:")
+        await set_panel_setting("auto_delete_seconds", int(value))
+        label = "disabled" if value == "0" else f"{value} seconds"
+        await m.reply(f"✅ Auto-delete set to: {label}")
+
+    raise StopPropagation
+
+
 @Client.on_callback_query(filters.regex("^none$"))
 async def ignore_cb(_, cq):
     try:
@@ -1001,7 +1107,10 @@ async def process_link(app: Client, m: Message, link: str, idx: int, total: int)
                 if dump_ids[1:]:
                     asyncio.create_task(copy_to_dumps(app, sent, dump_ids[1:]))
             else:
-                await m.reply_video(file_path, **upload_kwargs)
+                sent = await m.reply_video(file_path, **upload_kwargs)
+
+            panel = await get_panel_settings()
+            await schedule_auto_delete(app, sent.chat.id, sent.id, panel["auto_delete_seconds"])
 
             # Only count against free quota AFTER a successful full delivery
             if not await is_premium(m.from_user.id):
@@ -1118,10 +1227,23 @@ async def admin_repost(app: Client, m: Message):
     first, last = matches[0].start(), matches[-1].end()
     new_caption = caption[:first] + combined_link + caption[last:]
 
+    panel = await get_panel_settings()
+    button_markup = None
+    if panel["button_url"]:
+        button_markup = InlineKeyboardMarkup(
+            [[InlineKeyboardButton(panel["button_text"], url=panel["button_url"])]]
+        )
+
     if m.photo:
-        await app.send_photo(REPOST_CHANNEL, m.photo.file_id, caption=new_caption)
+        reposted = await app.send_photo(
+            REPOST_CHANNEL, m.photo.file_id, caption=new_caption, reply_markup=button_markup
+        )
     elif m.video:
-        await app.send_video(REPOST_CHANNEL, m.video.file_id, caption=new_caption)
+        reposted = await app.send_video(
+            REPOST_CHANNEL, m.video.file_id, caption=new_caption, reply_markup=button_markup
+        )
+
+    await schedule_auto_delete(app, reposted.chat.id, reposted.id, panel["auto_delete_seconds"])
 
     await status.edit_text(f"<b>✅ Stored {total} video(s) and reposted with combined link.</b>")
     raise StopPropagation
