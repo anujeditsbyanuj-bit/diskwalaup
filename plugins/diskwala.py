@@ -310,7 +310,12 @@ async def get_dumps() -> list[int]:
 
 
 # ── Admin panel settings (checkout button + auto-delete timer) ────
-_DEFAULT_SETTINGS = {"button_text": "CHECKOUT ♡", "button_url": "", "auto_delete_seconds": 0}
+_DEFAULT_SETTINGS = {
+    "button_text": "CHECKOUT ♡",
+    "button_url": "",
+    "auto_delete_seconds": 0,
+    "caption_template": "<blockquote>“<b>Below is Your Link</b> ↩️\n\n{link}”</blockquote>",
+}
 
 
 async def get_panel_settings() -> dict:
@@ -898,9 +903,10 @@ async def list_dumps(_, m):
 def _panel_markup(s: dict) -> InlineKeyboardMarkup:
     delete_label = "Off" if not s["auto_delete_seconds"] else f"{s['auto_delete_seconds']}s"
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📝 Repost Caption Template", callback_data="panel_set_caption_template")],
         [InlineKeyboardButton(f"✏️ Button Text: {s['button_text']}", callback_data="panel_set_button_text")],
         [InlineKeyboardButton(f"🔗 Button URL: {s['button_url'] or 'not set'}", callback_data="panel_set_button_url")],
-        [InlineKeyboardButton(f"⏱ Auto-Delete: {delete_label}", callback_data="panel_set_auto_delete")],
+        [InlineKeyboardButton(f"⏱ Auto-Delete (user videos): {delete_label}", callback_data="panel_set_auto_delete")],
         [InlineKeyboardButton("🔄 Refresh", callback_data="panel_refresh")],
     ])
 
@@ -923,14 +929,17 @@ async def panel_refresh_cb(_, cq: CallbackQuery):
     await cq.answer("Refreshed")
 
 
-@Client.on_callback_query(filters.regex("^panel_set_(button_text|button_url|auto_delete)$") & filters.user(OWNER_ID))
+@Client.on_callback_query(filters.regex("^panel_set_(button_text|button_url|auto_delete|caption_template)$") & filters.user(OWNER_ID))
 async def panel_set_cb(_, cq: CallbackQuery):
     key = cq.data.replace("panel_set_", "")
     pending_admin_input[cq.from_user.id] = key
     prompts = {
         "button_text": "Send the new <b>button text</b> (e.g. <code>CHECKOUT ♡</code>):",
         "button_url": "Send the new <b>button URL</b> (must start with http:// or https://):",
-        "auto_delete": "Send the <b>auto-delete time in seconds</b> (send <code>0</code> to turn it off):",
+        "auto_delete": "Send the <b>auto-delete time in seconds</b> for videos delivered to users (send <code>0</code> to turn it off):",
+        "caption_template": "Send the new <b>repost caption template</b>. Must include <code>{link}</code> "
+                             "where the combined link should go. HTML tags like &lt;b&gt;, &lt;blockquote&gt; work.\n\n"
+                             "Current:\n<code>" + (await get_panel_settings())["caption_template"].replace("<", "&lt;").replace(">", "&gt;") + "</code>",
     }
     await cq.answer()
     await cq.message.reply(prompts[key])
@@ -963,6 +972,13 @@ async def admin_panel_input(_, m: Message):
         await set_panel_setting("auto_delete_seconds", int(value))
         label = "disabled" if value == "0" else f"{value} seconds"
         await m.reply(f"✅ Auto-delete set to: {label}")
+
+    elif key == "caption_template":
+        if "{link}" not in value:
+            pending_admin_input[uid] = key
+            return await m.reply("⚠️ Template must include {link} somewhere. Try again:")
+        await set_panel_setting("caption_template", value)
+        await m.reply("✅ Caption template updated.")
 
     raise StopPropagation
 
@@ -1194,9 +1210,9 @@ async def store_video_for_link(app: Client, link: str, status_msg: Message, tag:
 async def admin_repost(app: Client, m: Message):
     """Owner sends/forwards a photo or video post whose caption contains one
     or more Diskwala/Flezen links. The bot downloads each linked video into
-    VIDEO_STORAGE_CHANNEL, replaces just the link-span in the caption with a
-    single combined deep-link, and reposts the (same media + edited caption)
-    into REPOST_CHANNEL. Text before/after the links is left untouched."""
+    VIDEO_STORAGE_CHANNEL, builds a single combined deep-link, and reposts
+    (same media, brand-new caption built from the /panel caption template —
+    original caption text is discarded entirely) into REPOST_CHANNEL."""
     if not VIDEO_STORAGE_CHANNEL or not REPOST_CHANNEL:
         await m.reply(
             "⚠️ Set VIDEO_STORAGE_CHANNEL and REPOST_CHANNEL env vars first."
@@ -1224,10 +1240,9 @@ async def admin_repost(app: Client, m: Message):
     payload = encode_start_payload("\n".join(links))
     combined_link = f"https://t.me/{me.username}?start={payload}"
 
-    first, last = matches[0].start(), matches[-1].end()
-    new_caption = caption[:first] + combined_link + caption[last:]
-
     panel = await get_panel_settings()
+    new_caption = panel["caption_template"].format(link=combined_link)
+
     button_markup = None
     if panel["button_url"]:
         button_markup = InlineKeyboardMarkup(
@@ -1242,8 +1257,6 @@ async def admin_repost(app: Client, m: Message):
         reposted = await app.send_video(
             REPOST_CHANNEL, m.video.file_id, caption=new_caption, reply_markup=button_markup
         )
-
-    await schedule_auto_delete(app, reposted.chat.id, reposted.id, panel["auto_delete_seconds"])
 
     await status.edit_text(f"<b>✅ Stored {total} video(s) and reposted with combined link.</b>")
     raise StopPropagation
