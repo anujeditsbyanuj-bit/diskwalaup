@@ -907,7 +907,6 @@ async def process_link(app: Client, m: Message, link: str, idx: int, total: int)
             dump_ids = await get_dumps()
 
             upload_kwargs = dict(
-                file_name=file_name,
                 caption=f"<code>{file_name}</code>",
                 duration=info["duration"], width=info["width"], height=info["height"],
                 thumb=thumb, supports_streaming=True, progress=progress,
