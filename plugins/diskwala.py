@@ -32,7 +32,7 @@ tg = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
 BOT_USERNAME, APP_SHORT_NAME = "sky577bot", "open"
 API_URL = "https://api2.diskwala.net/api/diskwala/download"
 RE = re.compile(r"https?://(?:www\.)?diskwala\.com/app/[A-Za-z0-9]+")
-CMDS = ["start", "stats", "adddump", "deldump", "dumps", "addpaid", "delpremium", "premium","broadcast", "link", "panel"]
+CMDS = ["start", "stats", "adddump", "deldump", "dumps", "addpaid", "delpremium", "premium","broadcast", "link", "panel", "checkchannels"]
 
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -896,6 +896,24 @@ async def deldump(_, m):
             continue
         await del_dump(cid); removed.append(str(cid))
     await m.reply(f"🗑️ Removed: <code>{', '.join(removed)}</code>" if removed else "Nothing removed.")
+
+
+@Client.on_message(filters.command("checkchannels") & filters.user(OWNER_ID))
+async def check_channels(app: Client, m: Message):
+    """Diagnoses 'Peer id invalid' issues by trying to resolve each
+    configured channel directly and reporting the exact result/error."""
+    lines = []
+    for label, cid in [("VIDEO_STORAGE_CHANNEL", VIDEO_STORAGE_CHANNEL), ("REPOST_CHANNEL", REPOST_CHANNEL)]:
+        if not cid:
+            lines.append(f"⚠️ {label}: not set in env vars")
+            continue
+        try:
+            chat = await app.get_chat(cid)
+            lines.append(f"✅ {label} (<code>{cid}</code>): resolved — {chat.title}")
+        except Exception as e:
+            lines.append(f"❌ {label} (<code>{cid}</code>): {type(e).__name__}: {e}")
+
+    await m.reply("<b>🔍 Channel check:</b>\n\n" + "\n".join(lines))
 
 
 @Client.on_message(filters.command("dumps") & filters.user(OWNER_ID))
