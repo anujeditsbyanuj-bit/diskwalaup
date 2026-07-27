@@ -22,17 +22,23 @@ import time
 user_orders: dict[str, dict] = {}
 active_qr_sessions: dict[int, str] = {}
 user_locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
+
+# Ensures admin reposts (multiple posts sent back-to-back) are fully
+# completed one at a time — download + upload + repost for post #1 finishes
+# before post #2 starts, so videos never get interleaved/mixed up.
+admin_repost_lock = asyncio.Lock()
 _free_trial_used: set[int] = set()  # backed by DB below, this is just a fast-path cache
 
 mongo = motor.motor_asyncio.AsyncIOMotorClient(DB_URI)[DB_NAME]
 db, dumps_col, meta_col, cache_col = mongo.users, mongo.dumps, mongo.meta, mongo.file_cache
 shortlinks_col = mongo.shortlinks
+repost_channels_col = mongo.repost_channels
 tg = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
 
 BOT_USERNAME, APP_SHORT_NAME = "sky577bot", "open"
 API_URL = "https://api2.diskwala.net/api/diskwala/download"
 RE = re.compile(r"https?://(?:www\.)?diskwala\.com/app/[A-Za-z0-9]+")
-CMDS = ["start", "stats", "adddump", "deldump", "dumps", "addpaid", "delpremium", "premium","broadcast", "link", "panel", "checkchannels"]
+CMDS = ["start", "stats", "adddump", "deldump", "dumps", "addpaid", "delpremium", "premium","broadcast", "link", "panel", "checkchannels", "addpost", "delpost", "postchannels"]
 
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -314,6 +320,31 @@ async def get_dumps() -> list[int]:
     return [d["_id"] async for d in dumps_col.find({})]
 
 
+def _parse_channel_ref(v: str):
+    v = v.strip()
+    try:
+        return int(v)
+    except ValueError:
+        return v if v.startswith("@") else f"@{v}"
+
+
+async def get_repost_channels() -> list:
+    """All channels a repost gets sent to: any added via /addpost, plus the
+    REPOST_CHANNEL env var (if set) as a default, deduplicated."""
+    channels = [d["_id"] async for d in repost_channels_col.find({})]
+    if REPOST_CHANNEL and REPOST_CHANNEL not in channels:
+        channels.append(REPOST_CHANNEL)
+    return channels
+
+
+async def add_repost_channel(cid):
+    await repost_channels_col.update_one({"_id": cid}, {"$set": {"_id": cid}}, upsert=True)
+
+
+async def del_repost_channel(cid):
+    await repost_channels_col.delete_one({"_id": cid})
+
+
 # ── Admin panel settings (checkout button + auto-delete timer) ────
 _DEFAULT_SETTINGS = {
     "button_text": "CHECKOUT ♡",
@@ -443,13 +474,28 @@ async def set_premium(user_id: int, value: bool):
     await db.update_one({"_id": user_id}, {"$set": {"premium": value}}, upsert=True)
 
 
+def _today_str() -> str:
+    return dl.datetime.now(pt.utc).strftime("%Y-%m-%d")
+
+
 async def get_free_used(user_id: int) -> int:
     doc = await db.find_one({"_id": user_id})
-    return doc.get("free_used", 0) if doc else 0
+    if not doc:
+        return 0
+    if doc.get("free_used_date") != _today_str():
+        return 0  # new day — previous count no longer applies
+    return doc.get("free_used", 0)
 
 
 async def increment_free_used(user_id: int):
-    await db.update_one({"_id": user_id}, {"$inc": {"free_used": 1}}, upsert=True)
+    today = _today_str()
+    doc = await db.find_one({"_id": user_id})
+    if doc and doc.get("free_used_date") == today:
+        await db.update_one({"_id": user_id}, {"$inc": {"free_used": 1}})
+    else:
+        await db.update_one(
+            {"_id": user_id}, {"$set": {"free_used": 1, "free_used_date": today}}, upsert=True
+        )
 
 
 async def can_full_download(user_id: int) -> bool:
@@ -924,6 +970,41 @@ async def list_dumps(_, m):
                   if dumps else "No dump channels configured.")
 
 
+@Client.on_message(filters.command("addpost") & filters.user(OWNER_ID))
+async def addpost(_, m):
+    parts = m.text.split()[1:]
+    if not parts:
+        return await m.reply("⚠️ Usage: <code>/addpost -100xxxx channelusername ...</code>")
+    added = []
+    for p in parts:
+        cid = _parse_channel_ref(p)
+        await add_repost_channel(cid)
+        added.append(str(cid))
+    await m.reply(f"✅ Added post channel(s): <code>{', '.join(added)}</code>")
+
+
+@Client.on_message(filters.command("delpost") & filters.user(OWNER_ID))
+async def delpost(_, m):
+    parts = m.text.split()[1:]
+    if not parts:
+        return await m.reply("⚠️ Usage: <code>/delpost -100xxxx</code>")
+    removed = []
+    for p in parts:
+        cid = _parse_channel_ref(p)
+        await del_repost_channel(cid)
+        removed.append(str(cid))
+    await m.reply(f"🗑️ Removed post channel(s): <code>{', '.join(removed)}</code>")
+
+
+@Client.on_message(filters.command("postchannels") & filters.user(OWNER_ID))
+async def list_post_channels(_, m):
+    channels = await get_repost_channels()
+    await m.reply(
+        "<b>📮 Repost (post) channels:</b>\n" + "\n".join(f"• <code>{c}</code>" for c in channels)
+        if channels else "No post channels configured."
+    )
+
+
 def _panel_markup(s: dict) -> InlineKeyboardMarkup:
     delete_label = "Off" if not s["auto_delete_seconds"] else f"{s['auto_delete_seconds']}s"
     return InlineKeyboardMarkup([
@@ -1232,56 +1313,72 @@ async def admin_repost(app: Client, m: Message):
     or more Diskwala/Flezen links. The bot downloads each linked video into
     VIDEO_STORAGE_CHANNEL, builds a single combined deep-link, and reposts
     (same media, brand-new caption built from the /panel caption template —
-    original caption text is discarded entirely) into REPOST_CHANNEL."""
-    if not VIDEO_STORAGE_CHANNEL or not REPOST_CHANNEL:
-        await m.reply(
-            "⚠️ Set VIDEO_STORAGE_CHANNEL and REPOST_CHANNEL env vars first."
-        )
-        raise StopPropagation
+    original caption text is discarded entirely) into every configured post
+    channel (see /addpost, /delpost, /postchannels).
 
+    Multiple posts sent back-to-back are processed strictly one at a time
+    (admin_repost_lock) — post #1 fully finishes (every link downloaded,
+    uploaded, and reposted) before post #2 starts, so videos never end up
+    mixed between posts."""
     caption = m.caption or ""
     matches = list(RE.finditer(caption))
     if not matches:
         return  # no diskwala/flezen links in this post — not for us
 
-    links = [mm.group(0) for mm in matches]
-    total = len(links)
-    status = await m.reply(f"<b>⚙️ Processing {total} link(s)...</b>")
-
-    for i, link in enumerate(links, start=1):
-        tag = f"[{i}/{total}]"
-        try:
-            await store_video_for_link(app, link, status, tag)
-        except Exception as e:
-            await status.edit_text(f"<b>❌ Failed on {tag}</b>\n<code>{e}</code>")
+    async with admin_repost_lock:
+        post_channels = await get_repost_channels()
+        if not VIDEO_STORAGE_CHANNEL or not post_channels:
+            await m.reply(
+                "⚠️ Set VIDEO_STORAGE_CHANNEL env var and add at least one "
+                "post channel with /addpost first."
+            )
             raise StopPropagation
 
-    me = await app.get_me()
-    code = await create_short_code(links)
-    combined_link = f"https://t.me/{me.username}?start={code}"
+        links = [mm.group(0) for mm in matches]
+        total = len(links)
+        status = await m.reply(f"<b>⚙️ Processing {total} link(s)...</b>")
 
-    panel = await get_panel_settings()
-    new_caption = panel["caption_template"].format(link=combined_link)
+        for i, link in enumerate(links, start=1):
+            tag = f"[{i}/{total}]"
+            try:
+                await store_video_for_link(app, link, status, tag)
+            except Exception as e:
+                await status.edit_text(f"<b>❌ Failed on {tag}</b>\n<code>{e}</code>")
+                raise StopPropagation
 
-    button_markup = None
-    if panel["button_url"]:
-        button_markup = InlineKeyboardMarkup(
-            [[InlineKeyboardButton(panel["button_text"], url=panel["button_url"])]]
+        me = await app.get_me()
+        code = await create_short_code(links)
+        combined_link = f"https://t.me/{me.username}?start={code}"
+
+        panel = await get_panel_settings()
+        new_caption = panel["caption_template"].format(link=combined_link)
+
+        button_markup = None
+        if panel["button_url"]:
+            button_markup = InlineKeyboardMarkup(
+                [[InlineKeyboardButton(panel["button_text"], url=panel["button_url"])]]
+            )
+
+        for channel in post_channels:
+            try:
+                if m.photo:
+                    await app.send_photo(
+                        channel, m.photo.file_id, caption=new_caption,
+                        reply_markup=button_markup, parse_mode=ParseMode.HTML,
+                    )
+                elif m.video:
+                    await app.send_video(
+                        channel, m.video.file_id, caption=new_caption,
+                        reply_markup=button_markup, parse_mode=ParseMode.HTML,
+                    )
+            except Exception as e:
+                await status.reply(f"⚠️ Failed to post to <code>{channel}</code>: {e}")
+
+        await status.edit_text(
+            f"<b>✅ Stored {total} video(s) and reposted to {len(post_channels)} channel(s).</b>"
         )
+        raise StopPropagation
 
-    if m.photo:
-        reposted = await app.send_photo(
-            REPOST_CHANNEL, m.photo.file_id, caption=new_caption,
-            reply_markup=button_markup, parse_mode=ParseMode.HTML,
-        )
-    elif m.video:
-        reposted = await app.send_video(
-            REPOST_CHANNEL, m.video.file_id, caption=new_caption,
-            reply_markup=button_markup, parse_mode=ParseMode.HTML,
-        )
-
-    await status.edit_text(f"<b>✅ Stored {total} video(s) and reposted with combined link.</b>")
-    raise StopPropagation
 
 
 @Client.on_message(filters.private & (filters.text | filters.caption) & ~filters.command(CMDS))
