@@ -1309,6 +1309,24 @@ async def store_video_for_link(app: Client, link: str, status_msg: Message, tag:
     filters.private & filters.user(OWNER_ID) & (filters.photo | filters.video) & filters.caption
 )
 async def admin_repost(app: Client, m: Message):
+    """Fast entrypoint — Pyrogram calls this per-message via a limited pool
+    of worker slots (TG_BOT_WORKERS). If we did the downloading/uploading
+    right here, those slots would fill up with admin posts and normal users
+    clicking links would get no response until all posts finished. Instead
+    we hand the real work to a detached background task and return
+    immediately, freeing this worker slot right away for the next update
+    (a user's link, another admin post, etc). The background tasks still
+    serialize themselves via admin_repost_lock so posts don't get mixed."""
+    caption = m.caption or ""
+    matches = list(RE.finditer(caption))
+    if not matches:
+        return  # no diskwala/flezen links in this post — not for us
+
+    asyncio.create_task(_run_admin_repost(app, m, matches))
+    raise StopPropagation
+
+
+async def _run_admin_repost(app: Client, m: Message, matches):
     """Owner sends/forwards a photo or video post whose caption contains one
     or more Diskwala/Flezen links. The bot downloads each linked video into
     VIDEO_STORAGE_CHANNEL, builds a single combined deep-link, and reposts
@@ -1319,12 +1337,8 @@ async def admin_repost(app: Client, m: Message):
     Multiple posts sent back-to-back are processed strictly one at a time
     (admin_repost_lock) — post #1 fully finishes (every link downloaded,
     uploaded, and reposted) before post #2 starts, so videos never end up
-    mixed between posts."""
-    caption = m.caption or ""
-    matches = list(RE.finditer(caption))
-    if not matches:
-        return  # no diskwala/flezen links in this post — not for us
-
+    mixed between posts. Running as a background task (see admin_repost
+    above) means this queueing never blocks normal users."""
     async with admin_repost_lock:
         post_channels = await get_repost_channels()
         if not VIDEO_STORAGE_CHANNEL or not post_channels:
