@@ -1,6 +1,6 @@
 from pyrogram import Client, filters, StopPropagation
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
-from telethon import TelegramClient
+from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl.functions.messages import RequestAppWebViewRequest
 from telethon.tl.types import InputBotAppShortName, InputPeerSelf, DataJSON
@@ -576,6 +576,45 @@ async def get_init():
     ))
     return unquote(urlparse(r.url).fragment.split("tgWebAppData=", 1)[1].split("&tgWebAppVersion=", 1)[0])
 
+# ── Diskwaladsbot proxy ─────────────────────────────────────────────
+# Diskwala's own API now encrypts its responses, so instead of calling it
+# directly we automate @Diskwaladsbot (a public bot that already handles
+# the fetch/decrypt) via our own userbot account (`tg`, same Telethon
+# session used above). We send it the link and wait for its video reply,
+# matched by Telegram's reply-to-message-id so concurrent requests from
+# different users never get mixed up with each other.
+DISKWALADSBOT = "Diskwaladsbot"
+_pending_diskwaladsbot: dict[int, asyncio.Future] = {}
+
+
+@tg.on(events.NewMessage(from_users=DISKWALADSBOT))
+async def _on_diskwaladsbot_reply(event):
+    msg = event.message
+    if not (msg.video or msg.document):
+        return
+    fut = _pending_diskwaladsbot.get(msg.reply_to_msg_id)
+    if fut and not fut.done():
+        fut.set_result(msg)
+
+
+async def fetch_via_diskwaladsbot(link: str, timeout: int = 150):
+    """Sends `link` to @Diskwaladsbot and waits for its video reply.
+    Raises on timeout or if no reply arrives in time."""
+    if not tg.is_connected():
+        await tg.connect()
+
+    loop = asyncio.get_event_loop()
+    fut = loop.create_future()
+
+    sent = await tg.send_message(DISKWALADSBOT, link)
+    _pending_diskwaladsbot[sent.id] = fut
+    try:
+        return await asyncio.wait_for(fut, timeout=timeout)
+    except asyncio.TimeoutError:
+        raise Exception(f"No response from @{DISKWALADSBOT} within {timeout}s")
+    finally:
+        _pending_diskwaladsbot.pop(sent.id, None)
+
 from urllib.parse import quote
 import requests
 import time
@@ -1111,23 +1150,31 @@ async def ignore_cb(_, cq):
 
 async def deliver_stream_only(m: Message, msg: Message, link: str, tag: str):
     try:
-        f = await asyncio.to_thread(fetch, link, await get_init())
+        await msg.edit_text(f"<b>📨 𝖱𝖤𝖰𝖴𝖤𝖲𝖳𝖨𝖭𝖦 𝖵𝖨𝖠 @{DISKWALADSBOT}... {tag}</b>")
+        tmsg = await fetch_via_diskwaladsbot(link)
 
-        file_name = f["name"]
-        download_url = f["downloadUrl"]
-        size = f["size"]
-        thumb = f["thumb"]
+        file_name = (tmsg.file.name if tmsg.file else None) or "video.mp4"
+        size = (tmsg.file.size if tmsg.file else 0) or 0
+
+        thumb_path = None
+        try:
+            thumb_path = await tg.download_media(
+                tmsg, thumb=-1,
+                file=os.path.join(DOWNLOAD_DIR, f"preview_{uuid.uuid4().hex[:8]}.jpg"),
+            )
+        except Exception:
+            thumb_path = None
 
         # Send thumbnail as spoiler
-        if thumb:
+        if thumb_path:
             await m.reply_photo(
-                photo=thumb,
+                photo=thumb_path,
                 has_spoiler=True,
                 caption=f"""<b>🔒 𝖥𝖱𝖤𝖤 𝖫𝖨𝖬𝖨𝖳 𝖱𝖤𝖠𝖢𝖧𝖤𝖣 {tag}</b>
 
 <blockquote expandable>
 📂 <code>{file_name}</code>
-💾 <code>{f['size']/1048576:.2f} MB</code>
+💾 <code>{size/1048576:.2f} MB</code>
 </blockquote>
 
 𝖴𝗉𝗀𝗋𝖺𝖽𝖾 𝗍𝗈 𝖯𝗋𝖾𝗆𝗂𝗎𝗆 𝖿𝗈𝗋 𝖿𝗎𝗅𝗅 𝖽𝗈𝗐𝗇𝗅𝗈𝖺𝖽𝗌.
@@ -1141,6 +1188,10 @@ async def deliver_stream_only(m: Message, msg: Message, link: str, tag: str):
             )
 
             await msg.delete()
+            try:
+                os.remove(thumb_path)
+            except Exception:
+                pass
 
         else:
             await msg.edit_text(
@@ -1148,7 +1199,7 @@ async def deliver_stream_only(m: Message, msg: Message, link: str, tag: str):
 
 <blockquote expandable>
 📂 <code>{file_name}</code>
-💾 <code>{f['size']/1048576:.2f} MB</code>
+💾 <code>{size/1048576:.2f} MB</code>
 </blockquote>""",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton(
@@ -1181,22 +1232,17 @@ async def process_link(app: Client, m: Message, link: str, idx: int, total: int)
         os.makedirs(req_dir, exist_ok=True)
 
         try:
-            f = await asyncio.to_thread(fetch, link, await get_init())
-            file_name, download_url = f["name"], f["downloadUrl"]
-            file_path = os.path.join(req_dir, file_name)
-
             async with download_semaphore:
                 await msg.edit_text(
-                    f"<b>⬇️ 𝖣𝖮𝖶𝖭𝖫𝖮𝖠𝖣𝖨𝖭𝖦... {tag}</b>\n\n<code>{file_name}</code>",
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⏳ 0%", callback_data="none")]])
+                    f"<b>📨 𝖱𝖤𝖰𝖴𝖤𝖲𝖳𝖨𝖭𝖦 𝖵𝖨𝖠 @{DISKWALADSBOT}... {tag}</b>"
                 )
-                await run_aria2c(download_url, file_path, msg, tag)
+                tmsg = await fetch_via_diskwaladsbot(link)
+                await msg.edit_text(f"<b>⬇️ 𝖣𝖮𝖶𝖭𝖫𝖮𝖠𝖣𝖨𝖭𝖦... {tag}</b>")
+                file_path = await tg.download_media(tmsg, file=req_dir + os.sep)
 
-            try:
-                actual_size = os.path.getsize(file_path)
-                await add_bandwidth(actual_size)
-            except Exception:
-                actual_size = f.get("size", 0)
+            file_name = os.path.basename(file_path)
+            actual_size = os.path.getsize(file_path)
+            await add_bandwidth(actual_size)
 
             info = await get_video_info(file_path)
             thumb_path = os.path.join(req_dir, "thumb.jpg")
@@ -1282,21 +1328,17 @@ async def store_video_for_link(app: Client, link: str, status_msg: Message, tag:
         req_dir = os.path.join(DOWNLOAD_DIR, "admin_repost", uuid.uuid4().hex[:8])
         os.makedirs(req_dir, exist_ok=True)
         try:
-            f = await asyncio.to_thread(fetch, link, await get_init())
-            file_name, download_url = f["name"], f["downloadUrl"]
-            file_path = os.path.join(req_dir, file_name)
-
             async with download_semaphore:
                 await status_msg.edit_text(
-                    f"<b>⬇️ 𝖣𝖮𝖶𝖭𝖫𝖮𝖠𝖣𝖨𝖭𝖦... {tag}</b>\n\n<code>{file_name}</code>"
+                    f"<b>📨 𝖱𝖤𝖰𝖴𝖤𝖲𝖳𝖨𝖭𝖦 𝖵𝖨𝖠 @{DISKWALADSBOT}... {tag}</b>"
                 )
-                await run_aria2c(download_url, file_path, status_msg, tag)
+                tmsg = await fetch_via_diskwaladsbot(link)
+                await status_msg.edit_text(f"<b>⬇️ 𝖣𝖮𝖶𝖭𝖫𝖮𝖠𝖣𝖨𝖭𝖦... {tag}</b>")
+                file_path = await tg.download_media(tmsg, file=req_dir + os.sep)
 
-            try:
-                actual_size = os.path.getsize(file_path)
-                await add_bandwidth(actual_size)
-            except Exception:
-                actual_size = f.get("size", 0)
+            file_name = os.path.basename(file_path)
+            actual_size = os.path.getsize(file_path)
+            await add_bandwidth(actual_size)
 
             info = await get_video_info(file_path)
             thumb_path = os.path.join(req_dir, "thumb.jpg")
