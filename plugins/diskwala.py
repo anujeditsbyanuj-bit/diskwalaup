@@ -167,7 +167,7 @@ async def buy_and_verify_handler(client: Client, query: CallbackQuery):
                     "3️⃣ 𝖡𝗈𝗍 𝗐𝗂𝗅𝗅 𝗏𝖾𝗋𝗂𝖿𝗒 𝗒𝗈𝗎𝗋 𝗉𝖺𝗒𝗆𝖾𝗇𝗍 𝖺𝗇𝖽 𝖺𝖼𝗍𝗂𝗏𝖺𝗍𝖾 𝗒𝗈𝗎𝗋 𝗉𝗅𝖺𝗇.\n\n"
                     "🗒𝖳𝗁𝗂𝗌 𝖰𝖱 𝖢𝗈𝖽𝖾 𝗐𝗂𝗅𝗅 𝖾𝗑𝗉𝗂𝗋𝖾 𝗂𝗇 5 𝖬𝗂𝗇𝗎𝗍𝖾𝗌. 𝖼𝗈𝗆𝗉𝗅𝖾𝗍𝖾 𝗍𝗁𝖾 𝗉𝖺𝗒𝗆𝖾𝗇𝗍 𝗂𝗇 5 𝗆𝗂𝗇𝗎𝗍𝖾𝗌\n\n"
                     "<blockquote>𝖨𝖿 𝗒𝗈𝗎 𝖺𝗅𝗋𝖾𝖺𝖽𝗒 𝗉𝖺𝗂𝖽 𝗍𝗁𝖾 𝖺𝗆𝗈𝗎𝗇𝗍 𝖺𝗇𝖽 𝗌𝗍𝗂𝗅𝗅 𝗌𝗁𝗈𝗐𝗂𝗇𝗀 𝖯𝖺𝗒𝗆𝖾𝗇𝗍 𝖭𝗈𝗍 𝖥𝗈𝗎𝗇𝖽 𝗍𝗁𝖾𝗇 𝖢𝗈𝗇𝗍𝖺𝖼𝗍 "
-                    "<a href='https://t.me/DumpAdminBot?text=<b>Hey%20my%20order%20ID%20is%20{order_id}.%20\n\nI%20paid%20but%20my%20premium%20is%20not%20activated.</b>'>@DumpAdminBot</a></blockquote></b>"
+                    "<a href='https://t.me/anujedits76?text=<b>Hey%20my%20order%20ID%20is%20{order_id}.%20\n\nI%20paid%20but%20my%20premium%20is%20not%20activated.</b>'>@DumpAdminBot</a></blockquote></b>"
                 ),
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("⏳ 𝖤𝖷𝖯𝖨𝖱𝖤𝖲 𝖨𝖭 05:00", callback_data="none")
@@ -598,18 +598,18 @@ async def get_init():
 # we don't rely on Telegram's reply-to-message-id, since it's unclear
 # whether Diskwaladsbot actually threads its replies, and mixing multiple
 # in-flight requests caused responses to never get matched at all.
-DISKWALADSBOT = "Diskwaladsbot"
-_dab_logger = logging.getLogger("diskwaladsbot")
+DISKWALADSBOT = "AK_Img_to_link_bot"
+_dab_logger = logging.getLogger("AK_Img_to_link_bot")
 diskwaladsbot_lock = asyncio.Lock()
 _current_diskwaladsbot_future: asyncio.Future | None = None
 
 
-@tg.on(events.NewMessage(from_users=DISKWALADSBOT))
+@tg.on(events.NewMessage(from_users=AK_Img_to_link_bot))
 async def _on_diskwaladsbot_reply(event):
     global _current_diskwaladsbot_future
     msg = event.message
     _dab_logger.info(
-        f"received message from @{DISKWALADSBOT}: id={msg.id} reply_to={msg.reply_to_msg_id} "
+        f"received message from AK_Img_to_link_bot: id={msg.id} reply_to={msg.reply_to_msg_id} "
         f"has_video={bool(msg.video)} has_document={bool(msg.document)} text={msg.text!r}"
     )
     if not (msg.video or msg.document):
@@ -622,7 +622,7 @@ async def _on_diskwaladsbot_reply(event):
 
 
 async def fetch_via_diskwaladsbot(link: str, timeout: int = 150):
-    """Sends `link` to @Diskwaladsbot and waits for its video reply.
+    """Sends `link` to @AK_Img_to_link_bot and waits for its video reply.
     Only one request is ever in flight at a time (across the whole bot),
     so whatever video comes back next is unambiguously the answer.
     Raises on timeout or if no reply arrives in time."""
@@ -637,15 +637,15 @@ async def fetch_via_diskwaladsbot(link: str, timeout: int = 150):
         fut = loop.create_future()
         _current_diskwaladsbot_future = fut
 
-        await tg.send_message(DISKWALADSBOT, link)
-        _dab_logger.info(f"sent link to @{DISKWALADSBOT}: link={link}")
+        await tg.send_message(AK_Img_to_link_bot, link)
+        _dab_logger.info(f"sent link to @AK_Img_to_link_bot: link={link}")
         try:
             result = await asyncio.wait_for(fut, timeout=timeout)
             _dab_logger.info("got video reply")
             return result
         except asyncio.TimeoutError:
-            _dab_logger.error(f"TIMEOUT waiting for @{DISKWALADSBOT} reply")
-            raise Exception(f"No response from @{DISKWALADSBOT} within {timeout}s")
+            _dab_logger.error(f"TIMEOUT waiting for @AK_Img_to_link_bot reply")
+            raise Exception(f"No response from @AK_Img_to_link_bot within {timeout}s")
         finally:
             _current_diskwaladsbot_future = None
 
