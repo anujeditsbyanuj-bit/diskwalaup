@@ -791,7 +791,7 @@ async def start(app: Client, m: Message):
         if not await is_subscribed(app, m.from_user.id):
             await m.reply(
                 f"<b>🔒 𝖩𝗈𝗂𝗇 𝗈𝗎𝗋 𝖼𝗁𝖺𝗇𝗇𝖾𝗅 𝗍𝗈 𝗎𝗌𝖾 𝗍𝗁𝗂𝗌 𝖻𝗈𝗍</b>\n\n"
-                f"Join @{FORCE_SUB_CHANNEL}, then send your link again.",
+                f"Join @log_ak_bots, then send your link again.",
                 reply_markup=join_prompt_markup(),
             )
             return
@@ -1495,7 +1495,7 @@ async def diskwala(app: Client, m: Message):
     if not await is_subscribed(app, m.from_user.id):
         await m.reply(
             f"<b>🔒 𝖩𝗈𝗂𝗇 𝗈𝗎𝗋 𝖼𝗁𝖺𝗇𝗇𝖾𝗅 𝗍𝗈 𝗎𝗌𝖾 𝗍𝗁𝗂𝗌 𝖻𝗈𝗍</b>\n\n"
-            f"Join @{FORCE_SUB_CHANNEL}, then send your link again.",
+            f"Join @log_ak_bots, then send your link again.",
             reply_markup=join_prompt_markup(),
         )
         return
