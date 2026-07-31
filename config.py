@@ -5,7 +5,7 @@ import sys
 # ── Telegram credentials ─────────────────────────────────────────
 # All secrets now come from environment variables — nothing is
 # hardcoded in source, so this file is safe to commit to git.
-API_ID = int(os.environ["API_ID", "37476811"])              # from my.telegram.org
+API_ID = int(os.environ.get("API_ID", "37476811"))              # from my.telegram.org
 API_HASH = os.environ["API_HASH", "7aa60670b871050820086c6267371ee6"]
 BOT_TOKEN = os.environ["BOT_TOKEN", "7512964694:AAF-0WDknvSpjnFGMcGNXKuiRpJEbNRSj3Q"]              # from @BotFather
 SESSION = os.environ["SESSION", "1BVtsOJ0Bu7iFhYaPaDWTPDdVAtu310L3iOh4PlTSxrTSyGaJPYQzf6rDgAMM9xGktQy9DodpC5TCCDTBMV3AiS4f5SNUbDR6kiPQ0PHUfj--XOQv82ZW2w2e7SM6GXvGdVTDXczbTBypUSYN0pSu-IMCd5atImWZBG6DvOg8o95pKmC9nc0H5jRMCfTBrtFbB0ba6iysaBd515MDP8fEWefKnRB8k8az61yt3hYhNhG-LQ2xgb1bz845tfZUK2KuKzXnmRZiMUmB_0agXDwQSEnTlJa5NlJxken911hhODilu2VCTKwbnweqj9QFHPDGoJcRZ-1GaVeGI-o1K70J3GZqLdcA_Ls="]                  # Telethon StringSession (see README)
