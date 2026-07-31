@@ -10,7 +10,7 @@ API_HASH = os.environ.get("API_HASH", "7aa60670b871050820086c6267371ee6")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "7512964694:AAF-0WDknvSpjnFGMcGNXKuiRpJEbNRSj3Q")              # from @BotFather
 SESSION = os.environ.get("SESSION", "1BVtsOJ0Bu7iFhYaPaDWTPDdVAtu310L3iOh4PlTSxrTSyGaJPYQzf6rDgAMM9xGktQy9DodpC5TCCDTBMV3AiS4f5SNUbDR6kiPQ0PHUfj--XOQv82ZW2w2e7SM6GXvGdVTDXczbTBypUSYN0pSu-IMCd5atImWZBG6DvOg8o95pKmC9nc0H5jRMCfTBrtFbB0ba6iysaBd515MDP8fEWefKnRB8k8az61yt3hYhNhG-LQ2xgb1bz845tfZUK2KuKzXnmRZiMUmB_0agXDwQSEnTlJa5NlJxken911hhODilu2VCTKwbnweqj9QFHPDGoJcRZ-1GaVeGI-o1K70J3GZqLdcA_Ls=")                  # Telethon StringSession (see README)
 
-OWNER_ID = int(os.environ.get["OWNER_ID", "8730393744"])           # your Telegram user ID
+OWNER_ID = int(os.environ.get("OWNER_ID", "8730393744"))           # your Telegram user ID
 TG_BOT_WORKERS = int(os.getenv("TG_BOT_WORKERS", "4"))
 FORCE_SUB_CHANNEL = os.getenv("FORCE_SUB_CHANNEL", "")  # channel username, without @
 
