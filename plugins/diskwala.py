@@ -585,32 +585,48 @@ async def get_init():
 # different users never get mixed up with each other.
 DISKWALADSBOT = "Diskwaladsbot"
 _pending_diskwaladsbot: dict[int, asyncio.Future] = {}
+_dab_logger = logging.getLogger("diskwaladsbot")
 
 
 @tg.on(events.NewMessage(from_users=DISKWALADSBOT))
 async def _on_diskwaladsbot_reply(event):
     msg = event.message
+    _dab_logger.info(
+        f"received message from @{DISKWALADSBOT}: id={msg.id} reply_to={msg.reply_to_msg_id} "
+        f"has_video={bool(msg.video)} has_document={bool(msg.document)} text={msg.text!r}"
+    )
     if not (msg.video or msg.document):
         return
     fut = _pending_diskwaladsbot.get(msg.reply_to_msg_id)
     if fut and not fut.done():
+        _dab_logger.info(f"matched pending request for reply_to={msg.reply_to_msg_id} — resolving")
         fut.set_result(msg)
+    else:
+        _dab_logger.info(
+            f"no pending request matched reply_to={msg.reply_to_msg_id} "
+            f"(pending ids: {list(_pending_diskwaladsbot.keys())})"
+        )
 
 
 async def fetch_via_diskwaladsbot(link: str, timeout: int = 150):
     """Sends `link` to @Diskwaladsbot and waits for its video reply.
     Raises on timeout or if no reply arrives in time."""
     if not tg.is_connected():
+        _dab_logger.info("tg client not connected — connecting now")
         await tg.connect()
 
     loop = asyncio.get_event_loop()
     fut = loop.create_future()
 
     sent = await tg.send_message(DISKWALADSBOT, link)
+    _dab_logger.info(f"sent link to @{DISKWALADSBOT}: our_msg_id={sent.id} link={link}")
     _pending_diskwaladsbot[sent.id] = fut
     try:
-        return await asyncio.wait_for(fut, timeout=timeout)
+        result = await asyncio.wait_for(fut, timeout=timeout)
+        _dab_logger.info(f"got video reply for our_msg_id={sent.id}")
+        return result
     except asyncio.TimeoutError:
+        _dab_logger.error(f"TIMEOUT waiting for @{DISKWALADSBOT} reply to our_msg_id={sent.id}")
         raise Exception(f"No response from @{DISKWALADSBOT} within {timeout}s")
     finally:
         _pending_diskwaladsbot.pop(sent.id, None)
