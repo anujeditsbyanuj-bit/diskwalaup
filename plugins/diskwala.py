@@ -609,7 +609,7 @@ async def _on_diskwaladsbot_reply(event):
     global _current_diskwaladsbot_future
     msg = event.message
     _dab_logger.info(
-        f"received message from AK_Img_to_link_bot: id={msg.id} reply_to={msg.reply_to_msg_id} "
+        f"received message from AK_Zip_Maker_Bot: id={msg.id} reply_to={msg.reply_to_msg_id} "
         f"has_video={bool(msg.video)} has_document={bool(msg.document)} text={msg.text!r}"
     )
     if not (msg.video or msg.document):
@@ -622,7 +622,7 @@ async def _on_diskwaladsbot_reply(event):
 
 
 async def fetch_via_diskwaladsbot(link: str, timeout: int = 150):
-    """Sends `link` to @AK_Img_to_link_bot and waits for its video reply.
+    """Sends `link` to @AK_Zip_Maker_Bot and waits for its video reply.
     Only one request is ever in flight at a time (across the whole bot),
     so whatever video comes back next is unambiguously the answer.
     Raises on timeout or if no reply arrives in time."""
@@ -638,14 +638,14 @@ async def fetch_via_diskwaladsbot(link: str, timeout: int = 150):
         _current_diskwaladsbot_future = fut
 
         await tg.send_message(AK_Img_to_link_bot, link)
-        _dab_logger.info(f"sent link to @AK_Img_to_link_bot: link={link}")
+        _dab_logger.info(f"sent link to @AK_Zip_Maker_Bot: link={link}")
         try:
             result = await asyncio.wait_for(fut, timeout=timeout)
             _dab_logger.info("got video reply")
             return result
         except asyncio.TimeoutError:
-            _dab_logger.error(f"TIMEOUT waiting for @AK_Img_to_link_bot reply")
-            raise Exception(f"No response from @AK_Img_to_link_bot within {timeout}s")
+            _dab_logger.error(f"TIMEOUT waiting for @AK_Zip_Maker_Bot reply")
+            raise Exception(f"No response from @AK_Zip_Maker_Bot within {timeout}s")
         finally:
             _current_diskwaladsbot_future = None
 
