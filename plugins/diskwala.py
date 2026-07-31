@@ -40,6 +40,19 @@ API_URL = "https://api2.diskwala.net/api/diskwala/download"
 RE = re.compile(r"https?://(?:www\.)?diskwala\.com/app/[A-Za-z0-9]+")
 CMDS = ["start", "stats", "adddump", "deldump", "dumps", "addpaid", "delpremium", "premium","broadcast", "link", "panel", "checkchannels", "addpost", "delpost", "postchannels"]
 
+
+def is_stale_message(m: Message, max_age_seconds: int = 120) -> bool:
+    """After a restart/redeploy, Telegram delivers every message the bot
+    missed while it was down, all at once. Without this guard, that whole
+    backlog gets processed simultaneously — flooding @Diskwaladsbot with
+    many links at once and breaking the single-request-at-a-time flow.
+    Ignore anything older than max_age_seconds instead."""
+    try:
+        msg_time = m.date.timestamp() if hasattr(m.date, "timestamp") else m.date
+        return (time.time() - msg_time) > max_age_seconds
+    except Exception:
+        return False
+
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 ARIA2C_PATH = shutil.which("aria2c") or "aria2c"
@@ -580,16 +593,20 @@ async def get_init():
 # Diskwala's own API now encrypts its responses, so instead of calling it
 # directly we automate @Diskwaladsbot (a public bot that already handles
 # the fetch/decrypt) via our own userbot account (`tg`, same Telethon
-# session used above). We send it the link and wait for its video reply,
-# matched by Telegram's reply-to-message-id so concurrent requests from
-# different users never get mixed up with each other.
+# session used above). Requests are sent ONE AT A TIME (global lock) and we
+# just take whatever video Diskwaladsbot sends back next as the answer —
+# we don't rely on Telegram's reply-to-message-id, since it's unclear
+# whether Diskwaladsbot actually threads its replies, and mixing multiple
+# in-flight requests caused responses to never get matched at all.
 DISKWALADSBOT = "Diskwaladsbot"
-_pending_diskwaladsbot: dict[int, asyncio.Future] = {}
 _dab_logger = logging.getLogger("diskwaladsbot")
+diskwaladsbot_lock = asyncio.Lock()
+_current_diskwaladsbot_future: asyncio.Future | None = None
 
 
 @tg.on(events.NewMessage(from_users=DISKWALADSBOT))
 async def _on_diskwaladsbot_reply(event):
+    global _current_diskwaladsbot_future
     msg = event.message
     _dab_logger.info(
         f"received message from @{DISKWALADSBOT}: id={msg.id} reply_to={msg.reply_to_msg_id} "
@@ -597,39 +614,40 @@ async def _on_diskwaladsbot_reply(event):
     )
     if not (msg.video or msg.document):
         return
-    fut = _pending_diskwaladsbot.get(msg.reply_to_msg_id)
-    if fut and not fut.done():
-        _dab_logger.info(f"matched pending request for reply_to={msg.reply_to_msg_id} — resolving")
-        fut.set_result(msg)
+    if _current_diskwaladsbot_future and not _current_diskwaladsbot_future.done():
+        _dab_logger.info("resolving current pending request with this video")
+        _current_diskwaladsbot_future.set_result(msg)
     else:
-        _dab_logger.info(
-            f"no pending request matched reply_to={msg.reply_to_msg_id} "
-            f"(pending ids: {list(_pending_diskwaladsbot.keys())})"
-        )
+        _dab_logger.info("got a video but nothing is currently waiting for one — ignoring")
 
 
 async def fetch_via_diskwaladsbot(link: str, timeout: int = 150):
     """Sends `link` to @Diskwaladsbot and waits for its video reply.
+    Only one request is ever in flight at a time (across the whole bot),
+    so whatever video comes back next is unambiguously the answer.
     Raises on timeout or if no reply arrives in time."""
-    if not tg.is_connected():
-        _dab_logger.info("tg client not connected — connecting now")
-        await tg.connect()
+    global _current_diskwaladsbot_future
 
-    loop = asyncio.get_event_loop()
-    fut = loop.create_future()
+    async with diskwaladsbot_lock:
+        if not tg.is_connected():
+            _dab_logger.info("tg client not connected — connecting now")
+            await tg.connect()
 
-    sent = await tg.send_message(DISKWALADSBOT, link)
-    _dab_logger.info(f"sent link to @{DISKWALADSBOT}: our_msg_id={sent.id} link={link}")
-    _pending_diskwaladsbot[sent.id] = fut
-    try:
-        result = await asyncio.wait_for(fut, timeout=timeout)
-        _dab_logger.info(f"got video reply for our_msg_id={sent.id}")
-        return result
-    except asyncio.TimeoutError:
-        _dab_logger.error(f"TIMEOUT waiting for @{DISKWALADSBOT} reply to our_msg_id={sent.id}")
-        raise Exception(f"No response from @{DISKWALADSBOT} within {timeout}s")
-    finally:
-        _pending_diskwaladsbot.pop(sent.id, None)
+        loop = asyncio.get_event_loop()
+        fut = loop.create_future()
+        _current_diskwaladsbot_future = fut
+
+        await tg.send_message(DISKWALADSBOT, link)
+        _dab_logger.info(f"sent link to @{DISKWALADSBOT}: link={link}")
+        try:
+            result = await asyncio.wait_for(fut, timeout=timeout)
+            _dab_logger.info("got video reply")
+            return result
+        except asyncio.TimeoutError:
+            _dab_logger.error(f"TIMEOUT waiting for @{DISKWALADSBOT} reply")
+            raise Exception(f"No response from @{DISKWALADSBOT} within {timeout}s")
+        finally:
+            _current_diskwaladsbot_future = None
 
 from urllib.parse import quote
 import requests
@@ -1386,6 +1404,8 @@ async def admin_repost(app: Client, m: Message):
     immediately, freeing this worker slot right away for the next update
     (a user's link, another admin post, etc). The background tasks still
     serialize themselves via admin_repost_lock so posts don't get mixed."""
+    if is_stale_message(m):
+        return  # backlog from downtime — skip instead of flooding processing
     caption = m.caption or ""
     matches = list(RE.finditer(caption))
     if not matches:
@@ -1466,6 +1486,8 @@ async def _run_admin_repost(app: Client, m: Message, matches):
 
 @Client.on_message(filters.private & (filters.text | filters.caption) & ~filters.command(CMDS))
 async def diskwala(app: Client, m: Message):
+    if is_stale_message(m):
+        return  # backlog from downtime — skip instead of flooding processing
     links = RE.findall(m.text or m.caption or "")
     if not links:
         return
