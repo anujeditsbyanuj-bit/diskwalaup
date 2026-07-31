@@ -604,7 +604,7 @@ diskwaladsbot_lock = asyncio.Lock()
 _current_diskwaladsbot_future: asyncio.Future | None = None
 
 
-@tg.on(events.NewMessage(from_users=AK_Img_to_link_bot))
+@tg.on(events.NewMessage(from_users=DISKWALADSBOT))
 async def _on_diskwaladsbot_reply(event):
     global _current_diskwaladsbot_future
     msg = event.message
