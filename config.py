@@ -12,7 +12,7 @@ SESSION = os.environ.get("SESSION", "1BVtsOJ0Bu7iFhYaPaDWTPDdVAtu310L3iOh4PlTSxr
 
 OWNER_ID = int(os.environ.get("OWNER_ID", "8730393744"))           # your Telegram user ID
 TG_BOT_WORKERS = int(os.getenv("TG_BOT_WORKERS", "4"))
-FORCE_SUB_CHANNEL = os.getenv("FORCE_SUB_CHANNEL", "")  # channel username, without @
+FORCE_SUB_CHANNEL = os.getenv("FORCE_SUB_CHANNEL", "log_ak_bots")  # channel username, without @
 
 # ── Database ──────────────────────────────────────────────────────
 DB_URI = os.environ.get("DATABASE_URL", "mongodb+srv://Anujedit:Anujedit@cluster0.7cs2nhd.mongodb.net/?appName=Cluster0")              # MongoDB connection string
