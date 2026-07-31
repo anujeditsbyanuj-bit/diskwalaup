@@ -54,7 +54,7 @@ _link_locks: dict[str, asyncio.Lock] = {}
 _locks_guard = asyncio.Lock()
 
 # ── Free-tier / premium config ───────────────────────────────────
-FREE_LIMIT = 5  # number of full downloads a non-premium user gets before stream-only mode
+FREE_LIMIT = 10  # number of full downloads a non-premium user gets before stream-only mode
 
 
 async def update_qr_timer(client, msg, order_id, orders, sessions, user_id, total_seconds=300):
@@ -154,7 +154,7 @@ async def buy_and_verify_handler(client: Client, query: CallbackQuery):
                     "3️⃣ 𝖡𝗈𝗍 𝗐𝗂𝗅𝗅 𝗏𝖾𝗋𝗂𝖿𝗒 𝗒𝗈𝗎𝗋 𝗉𝖺𝗒𝗆𝖾𝗇𝗍 𝖺𝗇𝖽 𝖺𝖼𝗍𝗂𝗏𝖺𝗍𝖾 𝗒𝗈𝗎𝗋 𝗉𝗅𝖺𝗇.\n\n"
                     "🗒𝖳𝗁𝗂𝗌 𝖰𝖱 𝖢𝗈𝖽𝖾 𝗐𝗂𝗅𝗅 𝖾𝗑𝗉𝗂𝗋𝖾 𝗂𝗇 5 𝖬𝗂𝗇𝗎𝗍𝖾𝗌. 𝖼𝗈𝗆𝗉𝗅𝖾𝗍𝖾 𝗍𝗁𝖾 𝗉𝖺𝗒𝗆𝖾𝗇𝗍 𝗂𝗇 5 𝗆𝗂𝗇𝗎𝗍𝖾𝗌\n\n"
                     "<blockquote>𝖨𝖿 𝗒𝗈𝗎 𝖺𝗅𝗋𝖾𝖺𝖽𝗒 𝗉𝖺𝗂𝖽 𝗍𝗁𝖾 𝖺𝗆𝗈𝗎𝗇𝗍 𝖺𝗇𝖽 𝗌𝗍𝗂𝗅𝗅 𝗌𝗁𝗈𝗐𝗂𝗇𝗀 𝖯𝖺𝗒𝗆𝖾𝗇𝗍 𝖭𝗈𝗍 𝖥𝗈𝗎𝗇𝖽 𝗍𝗁𝖾𝗇 𝖢𝗈𝗇𝗍𝖺𝖼𝗍 "
-                    "<a href='https://t.me/salesgodx?text=<b>Hey%20my%20order%20ID%20is%20{order_id}.%20\n\nI%20paid%20but%20my%20premium%20is%20not%20activated.</b>'>@salesgodx</a></blockquote></b>"
+                    "<a href='https://t.me/DumpAdminBot?text=<b>Hey%20my%20order%20ID%20is%20{order_id}.%20\n\nI%20paid%20but%20my%20premium%20is%20not%20activated.</b>'>@DumpAdminBot</a></blockquote></b>"
                 ),
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("⏳ 𝖤𝖷𝖯𝖨𝖱𝖤𝖲 𝖨𝖭 05:00", callback_data="none")
@@ -242,7 +242,7 @@ async def buy_and_verify_handler(client: Client, query: CallbackQuery):
                     parse_mode=ParseMode.HTML,
                     reply_markup=InlineKeyboardMarkup([
                         [InlineKeyboardButton("🔄 𝖳𝖱𝖸 𝖠𝖦𝖠𝖨𝖭", callback_data=f"retry_{order_id}")],
-                        [InlineKeyboardButton("🆘 𝖲𝖴𝖯𝖯𝖮𝖱𝖳", url="https://t.me/salesgodx")]
+                        [InlineKeyboardButton("🆘 𝖲𝖴𝖯𝖯𝖮𝖱𝖳", url="https://t.me/DumpAdminBot")]
                     ])
                 )
 
@@ -633,21 +633,32 @@ def fetch(link, auth):
             if not file:
                 raise Exception(f"No file returned\n{data}")
 
+            def _pick(d, *keys, required=True, default=None):
+                for k in keys:
+                    if k in d and d[k] not in (None, ""):
+                        return d[k]
+                if required:
+                    raise Exception(
+                        f"Diskwala/Flezen API response format changed — none of "
+                        f"{keys} found. Raw 'file' object:\n{json.dumps(d, indent=2)[:1500]}"
+                    )
+                return default
+
             # Normalize Flezen response to Diskwala format
             if "flezen.com" in link.lower():
                 return {
-                    "name": file["name"],
-                    "size": file["size"],
-                    "downloadUrl": file["url"],
+                    "name": _pick(file, "name", "fileName", "filename", "title"),
+                    "size": _pick(file, "size", "fileSize", "length"),
+                    "downloadUrl": _pick(file, "url", "downloadUrl", "download_url", "link"),
                     "thumb": None,
                     "type": file.get("type"),
                 }
 
             # Diskwala response
             return {
-                "name": file["name"],
-                "size": file["size"],
-                "downloadUrl": file["downloadUrl"],
+                "name": _pick(file, "name", "fileName", "filename", "title"),
+                "size": _pick(file, "size", "fileSize", "length"),
+                "downloadUrl": _pick(file, "downloadUrl", "download_url", "url", "link"),
                 "thumb": file.get("thumb"),
                 "extension": file.get("extension"),
             }
