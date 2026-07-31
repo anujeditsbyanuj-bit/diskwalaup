@@ -42,7 +42,7 @@ ACTIVE_PAYMENT = os.getenv("ACTIVE_PAYMENT_ACCOUNT", "default")
 # Log / dump channel(s) that receive copies + payment notifications.
 # Comma-separated list of chat IDs in env, e.g. "-100111,-100222"
 LOG_CHANNELS = {
-    "default": int(os.environ.get["LOG_CHANNEL_ID"]) if os.getenv("LOG_CHANNEL_ID", "-1003824246703") else None,
+    "default": int(os.environ.get("LOG_CHANNEL_ID", "-1003824246703")) if os.getenv("LOG_CHANNEL_ID") else None,
 }
 
 # ── Admin repost feature ───────────────────────────────────────────
