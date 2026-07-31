@@ -15,7 +15,7 @@ TG_BOT_WORKERS = int(os.getenv("TG_BOT_WORKERS", "4"))
 FORCE_SUB_CHANNEL = os.getenv("FORCE_SUB_CHANNEL", "")  # channel username, without @
 
 # ── Database ──────────────────────────────────────────────────────
-DB_URI = os.environ.get["DATABASE_URL", "mongodb+srv://Anujedit:Anujedit@cluster0.7cs2nhd.mongodb.net/?appName=Cluster0"]              # MongoDB connection string
+DB_URI = os.environ.get("DATABASE_URL", "mongodb+srv://Anujedit:Anujedit@cluster0.7cs2nhd.mongodb.net/?appName=Cluster0")              # MongoDB connection string
 DB_NAME = os.getenv("DATABASE_NAME", "diskwala_bot")
 
 commands = ["start", "stats", "premium"]
