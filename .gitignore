@@ -4,3 +4,16 @@
 __pycache__/
 *.pyc
 downloads/
+pyrogram
+tgcrypto
+pyromod
+motor
+pymongo
+dnspython
+aiohttp
+telethon
+requests
+qrcode
+pillow
+pytz
+aiohttp
