@@ -6,7 +6,7 @@ BOT_TOKEN = "8694198519:AAHkfsd2hG584oC92jM-Ee2PJd2snDy49qM"
 
 OWNER_ID = 8730393744
 TG_BOT_WORKERS = 4
-FORCE_SUB_CHANNEL = "proerro"  # without the @
+FORCE_SUB_CHANNEL = "log_ak_bots"  # without the @
 
 DB_URI = os.getenv("DATABASE_URL", "mongodb+srv://Anujedit:Anujedit@cluster0.7cs2nhd.mongodb.net/?appName=Cluster0")
 DB_NAME = os.getenv("DATABASE_NAME", "diskwala")
